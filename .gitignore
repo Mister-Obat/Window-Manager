@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# User Data
+layouts.json
+
+# VS Code
+.vscode/
+
+# System
+Thumbs.db
+Desktop.ini
