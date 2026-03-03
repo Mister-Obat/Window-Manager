@@ -14,6 +14,24 @@ class WindowRestorer:
         self.matcher = matcher
         self.storage = storage
 
+    def _is_electron_like_window(self, saved, current=None):
+        markers = ("electron.exe", "chrome.exe", "msedge.exe")
+        candidates = []
+
+        saved_cmdline = saved.get("cmdline") or []
+        if saved_cmdline:
+            candidates.append(saved_cmdline[0].lower())
+
+        if current:
+            current_cmdline = current.get("cmdline") or []
+            if current_cmdline:
+                candidates.append(current_cmdline[0].lower())
+            exe_name = current.get("exe_name")
+            if exe_name:
+                candidates.append(str(exe_name).lower())
+
+        return any(any(marker in candidate for marker in markers) for candidate in candidates)
+
     def _launch_browser_group(self, exe_path, is_incognito, items):
         if not items: return
         try:
@@ -107,8 +125,25 @@ class WindowRestorer:
                     with Logger.step(f"Lancement Browser: {os.path.basename(browser_exe)}", private=is_incognito):
                         subprocess.Popen(args, cwd=cwd)
             elif cmdline:
-                with Logger.step(f"Lancement Cmd: {cmdline[0]}"):
-                    subprocess.Popen(cmdline, cwd=cwd)
+                exe = cmdline[0].lower()
+                is_raw_electron_dev = exe.endswith("electron.exe") and any(arg == "." for arg in cmdline[1:])
+
+                if is_raw_electron_dev and cwd:
+                    start_dev_bat = os.path.join(cwd, "start-dev.bat")
+                    package_json = os.path.join(cwd, "package.json")
+
+                    if os.path.isfile(start_dev_bat):
+                        with Logger.step("Lancement Electron via start-dev.bat"):
+                            subprocess.Popen(["cmd", "/c", "start-dev.bat"], cwd=cwd)
+                    elif os.path.isfile(package_json):
+                        with Logger.step("Lancement Electron via npm run dev"):
+                            subprocess.Popen(["cmd", "/c", "npm", "run", "dev"], cwd=cwd)
+                    else:
+                        with Logger.step(f"Lancement Cmd: {cmdline[0]}"):
+                            subprocess.Popen(cmdline, cwd=cwd)
+                else:
+                    with Logger.step(f"Lancement Cmd: {cmdline[0]}"):
+                        subprocess.Popen(cmdline, cwd=cwd)
         except Exception as e:
             Logger.error(f"Launch failed: {e}")
 
@@ -117,6 +152,7 @@ class WindowRestorer:
         saved_rect = saved["rect"]
         saved_rect = ensure_rect_on_screen(saved_rect)
         show_cmd = saved.get("show_cmd", win32con.SW_SHOWNORMAL)
+        is_electron_like = self._is_electron_like_window(saved, current)
         
         try:
             was_minimized = win32gui.IsIconic(hwnd)
@@ -168,8 +204,9 @@ class WindowRestorer:
                 
                 success = False
                 for attempt in range(5):
-                    # flags: SWP_SHOWWINDOW is important to force visibility update
-                    flags = win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW
+                    flags = win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE
+                    if not is_electron_like:
+                        flags |= win32con.SWP_SHOWWINDOW
                     win32gui.SetWindowPos(hwnd, 0, x, y, w, h, flags)
                     
                     time.sleep(0.1)
@@ -183,7 +220,7 @@ class WindowRestorer:
                             break
                         else:
                              # Escalation Strategy
-                             if attempt == 2:
+                             if attempt == 2 and not is_electron_like:
                                   # If checking failed twice, maybe window is stuck in a weird state?
                                   # Force Restore + Frame Changed
                                   Logger.debug(f"[ESCALATE] Windows resiste. Force Restore...")
@@ -202,24 +239,18 @@ class WindowRestorer:
                      win32gui.ShowWindow(hwnd, win32con.SW_SHOWMAXIMIZED)
             else:
                  win32gui.UpdateWindow(hwnd)
-            
-            # --- 5. FORCE REPAINT (Fix for Blank Windows) ---
-            # Some apps (Tkinter, defaults) fail to repaint contents if un-minimized programmatically.
-            # Force a full invalidation and repaint.
-            win32gui.RedrawWindow(hwnd, None, None, win32con.RDW_ERASE | win32con.RDW_INVALIDATE | win32con.RDW_UPDATENOW | win32con.RDW_ALLCHILDREN)
 
-            # --- 6. ATOMIC RESIZE JIGGLE (Ultimate Fix) ---
-            # If Redraw is not enough, we change the size by 1px then revert.
-            # This forces the internal Layout Manager of the target app to re-run.
-            if show_cmd != win32con.SW_SHOWMAXIMIZED: 
-                x, y, r, b = saved_rect
-                w = r - x
-                h = b - y
-                
-                # Jiggle
-                win32gui.SetWindowPos(hwnd, 0, x, y, w+1, h, win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
-                time.sleep(0.02)
-                win32gui.SetWindowPos(hwnd, 0, x, y, w, h, win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
+            # Electron/Chromium windows can go black when forced redraw+jiggle is applied externally.
+            if not is_electron_like:
+                win32gui.RedrawWindow(hwnd, None, None, win32con.RDW_ERASE | win32con.RDW_INVALIDATE | win32con.RDW_UPDATENOW | win32con.RDW_ALLCHILDREN)
+
+                if show_cmd != win32con.SW_SHOWMAXIMIZED:
+                    x, y, r, b = saved_rect
+                    w = r - x
+                    h = b - y
+                    win32gui.SetWindowPos(hwnd, 0, x, y, w+1, h, win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
+                    time.sleep(0.02)
+                    win32gui.SetWindowPos(hwnd, 0, x, y, w, h, win32con.SWP_NOZORDER | win32con.SWP_NOACTIVATE)
 
         except Exception as e:
             Logger.error(f"Erreur placement {hwnd}: {e}")
@@ -412,3 +443,4 @@ class WindowRestorer:
         # 
         # Refined Logic: We iterate Phase 1 list again.
         return 
+

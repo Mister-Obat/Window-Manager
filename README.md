@@ -1,30 +1,31 @@
 # Window Manager
 
-**Window Manager** est un outil permettant de sauvegarder et restaurer efficacement la disposition de votre espace de travail sous Windows. Il mémorise la position, la taille et le contexte des fenêtres actives pour une restauration fidèle après un redémarrage.
+**Window Manager** est une application desktop Windows qui sauvegarde puis restaure votre espace de travail.  
+Elle mémorise la position, la taille, l'état et le contexte des fenêtres pour une restauration fiable après redémarrage ou relance d'applications.
 
 ![Window Manager Main](screenshot.png)
 ![Window Manager Options](screenshot2.png)
 
 ## Fonctionnalités
 
-*   **Restauration Complète** : Sauvegarde la géométrie et l'état (maximisé, minimisé) des fenêtres.
-*   **Support Navigateurs** : Réouverture des onglets pour Chrome et Firefox.
-*   **Explorateur Windows** : Restauration des dossiers ouverts aux emplacements exacts.
-*   **Respect du Z-Order** : Préservation de l'ordre de superposition des fenêtres.
-*   **Lancement Automatique** : Option d'exécution au démarrage du système.
-*   **Filtrage Intelligent** : Exclusion automatique des processus système et fenêtres parasites.
+*   **Sauvegarde/Restauration de scénarios** : géométrie (`rect`) + état (`normal`, `minimisé`, `maximisé`).
+*   **Restauration intelligente** : matching des fenêtres déjà ouvertes puis lancement séquentiel des manquantes.
+*   **Navigateurs pris en charge** : Chrome, Firefox et Edge (avec gestion du mode privé).
+*   **Explorateur Windows** : restauration des dossiers ouverts.
+*   **Réglages par ligne/scénario** : `restore_minimized`, `precise_urls`, filtres d'exclusion.
+*   **Démarrage automatique** : option d'exécution au démarrage de Windows.
 
 ## Installation
 
 ### Prérequis
 *   Windows 10 ou 11
-*   Python 3.x
+*   Python 3.11+ recommandé
 
 ### Configuration
 1.  Clonez le dépôt :
     ```bash
     git clone https://github.com/Mister-Obat/Window-Manager-2.git
-    cd Window-Manager
+    cd "Window Manager"
     ```
 
 2.  Installez les dépendances :
@@ -39,21 +40,25 @@ Lancez l'application via le script principal :
 py window_manager.pyw
 ```
 
+Option alternative :
+```bash
+start_manager.bat
+```
+
 ### Gestion des Scénarios
 1.  **Sauvegarder** : Configurez votre espace de travail, nommez le scénario et cliquez sur **SAUVER**.
-2.  **Restaurer** : Cliquez sur **CHARGER** pour réouvrir et repositionner vos applications.
+2.  **Restaurer** : Cliquez sur **CHARGER** pour rouvrir et repositionner vos applications.
+3.  **Options** : Utilisez le bouton `⚙️` pour régler les overrides de la ligne/scénario.
 
 ## Technologies
 
-*   **Python** / **Tkinter**
-*   **Win32 API** (pywin32) pour la gestion des fenêtres.
-*   **UIAutomation** pour l'inspection des navigateurs.
+*   **Python** / **Tkinter** (UI desktop)
+*   **pywin32** (`win32gui`, `win32con`, `win32process`) pour l'intégration Win32
+*   **psutil** pour les métadonnées process (`cmdline`, `cwd`, `exe`)
+*   **uiautomation** pour l'inspection navigateur (URL / mode privé)
 
-## Auteur
+## License
+Ce projet est distribué sous licence AGPL-3.0.
 
-Développé par Mister Obat.
-Conçu et développé avec l'assistance d'une IA.
-
-## Licence
-
-Distribué sous licence **AGPL-3.0**.
+---
+*Codé 100% par des IA, supervisé à l'arrache par Obat 😏*
