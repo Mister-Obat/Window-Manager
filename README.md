@@ -1,7 +1,7 @@
 # Window Manager
 
 **Window Manager** est une application desktop Windows qui sauvegarde puis restaure votre espace de travail.  
-Elle mémorise la position, la taille, l'état et le contexte des fenêtres pour une restauration fiable après redémarrage ou relance d'applications.
+Elle mémorise la position, la taille, l'état et le contexte des fenêtres pour une restauration fiable après redémarrage ou relance d'applications. 
 
 ![Window Manager Main](screenshot.png)
 ![Window Manager Options](screenshot2.png)
