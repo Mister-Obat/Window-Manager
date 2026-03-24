@@ -6,6 +6,7 @@ from .matcher import WindowMatcher
 from .restorer import WindowRestorer
 from .automation import is_incognito
 from .logger import Logger
+from .utils import capture_display_profile, get_rect_display_context
 
 class WindowManagerEngine:
     def __init__(self, layout_file_path):
@@ -61,6 +62,7 @@ class WindowManagerEngine:
             Logger.info("Début de l'analyse détaillée...")
             # Pass local settings as overrides
             windows = self.scanner.get_target_windows(detailed_scan=True, allow_peeking=True, overrides=final_settings)
+            display_profile = capture_display_profile()
             
             Logger.info("Fin de l'analyse détaillée.")
             
@@ -85,14 +87,15 @@ class WindowManagerEngine:
                     "cwd": w["cwd"],
                     "url": w["url"],
                     "folder_path": w["folder_path"],
-                    "is_incognito": is_priv
+                    "is_incognito": is_priv,
+                    "display": get_rect_display_context(w["rect"], display_profile),
                 })
-            
-            # Use overrides to persist settings with the layout if provided
-            if final_settings:
-                 self.storage.set_layout_settings(scenario_name, final_settings)
 
-            self.storage.set_layout(scenario_name, layout_data)
+            self.storage.set_layout(scenario_name, {
+                "windows": layout_data,
+                "settings": final_settings or {},
+                "display_profile": display_profile,
+            })
             Logger.success(f"Sauvegarde terminée ({len(layout_data)} fenêtres)")
             return True
         except Exception as e:

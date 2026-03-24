@@ -9,6 +9,7 @@
 - Phase 1: tentative de placement des fenêtres déjà ouvertes.
 - Phase 2: lancement des fenêtres manquantes puis placement.
 - Gestion dédiée navigateurs (Chrome/Firefox/Edge) et mode privé.
+- Si l'ordre des écrans ou l'écran principal change, le restore peut reprojeter une fenêtre sur son moniteur d'origine logique quand le scénario contient les métadonnées d'affichage.
 
 ## 3. Réglages
 - `restore_minimized`, `precise_urls`, filtres d'inclusion/exclusion.
@@ -27,3 +28,4 @@
 ## Limites connues
 - Le lancement d'apps en mode dev reste dépendant de l'environnement local (scripts/outils manquants => fallback commande brute potentiellement instable).
 - Le matching reste heuristique pour certains titres dynamiques.
+- Les anciens scénarios sans métadonnées d'affichage nécessitent une nouvelle sauvegarde pour bénéficier de l'adaptation automatique multi-écrans.

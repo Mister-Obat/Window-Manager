@@ -3,7 +3,13 @@ import os
 import subprocess
 import win32gui
 import win32con
-from .utils import normalize_url, ensure_rect_on_screen
+from .utils import (
+    adapt_rect_to_display,
+    capture_display_profile,
+    display_profiles_differ,
+    ensure_rect_on_screen,
+    normalize_url,
+)
 from .automation import is_incognito
 from .logger import Logger
 
@@ -13,6 +19,109 @@ class WindowRestorer:
         self.scanner = scanner
         self.matcher = matcher
         self.storage = storage
+        self._restore_display_context = None
+
+    def _resolve_launch_cwd(self, cwd, exe_path=None):
+        if cwd and os.path.isdir(cwd):
+            return cwd
+
+        exe_dir = None
+        if exe_path:
+            exe_dir = os.path.dirname(exe_path)
+            if exe_dir and os.path.isdir(exe_dir):
+                if cwd:
+                    Logger.warn(f"CWD invalide, fallback vers dossier exe: {cwd}")
+                return exe_dir
+
+        if cwd:
+            Logger.warn(f"CWD invalide, lancement sans cwd: {cwd}")
+        return None
+
+    def _get_saved_label(self, saved):
+        label = (
+            saved.get("exact_title")
+            or saved.get("title_pattern")
+            or saved.get("folder_path")
+            or saved.get("url")
+        )
+        if label:
+            return str(label)
+
+        cmdline = saved.get("cmdline") or []
+        if cmdline:
+            return os.path.basename(cmdline[0]) or str(cmdline[0])
+
+        return "Inconnu"
+
+    def _is_browser_saved(self, saved):
+        markers = ("chrome", "firefox", "msedge", "edge")
+        candidates = []
+
+        cmdline = saved.get("cmdline") or []
+        if cmdline:
+            candidates.append(str(cmdline[0]).lower())
+
+        for key in ("title_pattern", "exact_title", "exe_name"):
+            value = saved.get(key)
+            if value:
+                candidates.append(str(value).lower())
+
+        return any(any(marker in candidate for marker in markers) for candidate in candidates)
+
+    def _prepare_display_context(self, layout_pkg):
+        saved_profile = layout_pkg.get("display_profile") if isinstance(layout_pkg, dict) else None
+        current_profile = capture_display_profile()
+        changed = bool(saved_profile) and display_profiles_differ(saved_profile, current_profile)
+        legacy = not saved_profile
+
+        if changed:
+            Logger.warn("Configuration d'affichage changée depuis la sauvegarde. Adaptation automatique des positions.")
+        elif legacy and len(current_profile.get("monitors", [])) > 1:
+            Logger.warn("Scénario sans métadonnées d'affichage. Resauvegarde recommandée pour adapter les positions après changement d'écrans.")
+
+        self._restore_display_context = {
+            "saved_profile": saved_profile,
+            "current_profile": current_profile,
+            "changed": changed,
+            "legacy": legacy,
+            "warned_missing_window_display": False,
+            "needs_legacy_display_summary": legacy and len(current_profile.get("monitors", [])) > 1,
+            "needs_partial_display_summary": False,
+        }
+
+    def _resolve_saved_rect(self, saved):
+        saved_rect = saved["rect"]
+        context = self._restore_display_context or {}
+
+        if context.get("changed"):
+            saved_display = saved.get("display")
+            if saved_display:
+                saved_rect = adapt_rect_to_display(
+                    saved_rect,
+                    saved_display,
+                    context.get("current_profile"),
+                )
+            elif not context.get("warned_missing_window_display"):
+                Logger.warn("Certaines fenêtres n'ont pas de métadonnées d'écran; adaptation limitée. Une nouvelle sauvegarde du scénario est recommandée.")
+                context["warned_missing_window_display"] = True
+                context["needs_partial_display_summary"] = True
+
+        return ensure_rect_on_screen(saved_rect)
+
+    def _log_display_context_summary(self):
+        context = self._restore_display_context or {}
+
+        if context.get("needs_legacy_display_summary"):
+            Logger.warn(
+                "Note finale: si le placement semble incorrect, c'est probablement lié à un changement de disposition des écrans depuis la sauvegarde. "
+                "Resauvegarde recommandée pour mémoriser la disposition actuelle pour la prochaine restauration."
+            )
+
+        if context.get("needs_partial_display_summary"):
+            Logger.warn(
+                "Note finale: certaines fenêtres ont été restaurées sans métadonnées d'écran complètes. "
+                "Une nouvelle sauvegarde du scénario fiabilisera le placement lors des prochains changements d'écrans."
+            )
 
     def _is_electron_like_window(self, saved, current=None):
         markers = ("electron.exe", "chrome.exe", "msedge.exe")
@@ -33,9 +142,11 @@ class WindowRestorer:
         return any(any(marker in candidate for marker in markers) for candidate in candidates)
 
     def _launch_browser_group(self, exe_path, is_incognito, items):
-        if not items: return
+        if not items:
+            return False
         try:
             cwd = items[0].get("cwd")
+            launch_cwd = self._resolve_launch_cwd(cwd, exe_path)
             urls = []
             for item in items:
                 u = normalize_url(item.get("url"))
@@ -70,25 +181,31 @@ class WindowRestorer:
 
             msg = f"Lancement Groupe ({len(urls)} onglets)"
             if is_incognito: msg += " [MODE PRIVÉ]"
-            
+
             with Logger.step(f"{msg}: {exe_name}", private=is_incognito):
-                subprocess.Popen(args, cwd=cwd)
+                subprocess.Popen(args, cwd=launch_cwd)
+            return True
 
         except Exception as e:
             Logger.error(f"Group Launch failed: {e}")
+            return False
 
     def _launch_app(self, saved):
         cmdline = saved.get("cmdline")
         cwd = saved.get("cwd")
         url = saved.get("url")
         folder = saved.get("folder_path")
-        key = saved["title_pattern"]
         
         try:
+            key = saved.get("title_pattern", "")
+            title = saved.get("exact_title", "")
+            is_browser = self._is_browser_saved(saved)
+
             if folder:
                 Logger.info(f"Ouverture dossier: {folder}")
                 os.startfile(folder)
-            elif ("Chrome" in key or "Firefox" in key or "Edge" in key):
+                return True
+            elif is_browser or ("Chrome" in key or "Firefox" in key or "Edge" in key) or ("Chrome" in title or "Firefox" in title or "Edge" in title):
                 browser_exe = None
                 if cmdline:
                     for arg in cmdline:
@@ -98,6 +215,7 @@ class WindowRestorer:
                 if browser_exe:
                     if url: url = normalize_url(url)
                     args = [browser_exe]
+                    launch_cwd = self._resolve_launch_cwd(cwd, browser_exe)
                     
                     is_firefox = "firefox" in browser_exe.lower()
                     is_incognito = saved.get("is_incognito", False)
@@ -123,34 +241,48 @@ class WindowRestorer:
 
                     Logger.debug(f"Args: {args}")
                     with Logger.step(f"Lancement Browser: {os.path.basename(browser_exe)}", private=is_incognito):
-                        subprocess.Popen(args, cwd=cwd)
+                        subprocess.Popen(args, cwd=launch_cwd)
+                    return True
+                Logger.warn(f"Navigateur introuvable dans la commande: {self._get_saved_label(saved)}")
+                return False
             elif cmdline:
                 exe = cmdline[0].lower()
                 is_raw_electron_dev = exe.endswith("electron.exe") and any(arg == "." for arg in cmdline[1:])
+                launch_cwd = self._resolve_launch_cwd(cwd, cmdline[0])
 
                 if is_raw_electron_dev and cwd:
-                    start_dev_bat = os.path.join(cwd, "start-dev.bat")
-                    package_json = os.path.join(cwd, "package.json")
+                    if not launch_cwd:
+                        Logger.warn(f"CWD requis mais introuvable pour lancement Electron dev: {self._get_saved_label(saved)}")
+                        return False
+
+                    start_dev_bat = os.path.join(launch_cwd, "start-dev.bat")
+                    package_json = os.path.join(launch_cwd, "package.json")
 
                     if os.path.isfile(start_dev_bat):
                         with Logger.step("Lancement Electron via start-dev.bat"):
-                            subprocess.Popen(["cmd", "/c", "start-dev.bat"], cwd=cwd)
+                            subprocess.Popen(["cmd", "/c", "start-dev.bat"], cwd=launch_cwd)
+                        return True
                     elif os.path.isfile(package_json):
                         with Logger.step("Lancement Electron via npm run dev"):
-                            subprocess.Popen(["cmd", "/c", "npm", "run", "dev"], cwd=cwd)
+                            subprocess.Popen(["cmd", "/c", "npm", "run", "dev"], cwd=launch_cwd)
+                        return True
                     else:
                         with Logger.step(f"Lancement Cmd: {cmdline[0]}"):
-                            subprocess.Popen(cmdline, cwd=cwd)
+                            subprocess.Popen(cmdline, cwd=launch_cwd)
+                        return True
                 else:
                     with Logger.step(f"Lancement Cmd: {cmdline[0]}"):
-                        subprocess.Popen(cmdline, cwd=cwd)
+                        subprocess.Popen(cmdline, cwd=launch_cwd)
+                    return True
+            Logger.warn(f"Aucune commande exploitable pour: {self._get_saved_label(saved)}")
+            return False
         except Exception as e:
             Logger.error(f"Launch failed: {e}")
+            return False
 
     def _apply_window_placement(self, saved, current):
         hwnd = current["hwnd"]
-        saved_rect = saved["rect"]
-        saved_rect = ensure_rect_on_screen(saved_rect)
+        saved_rect = self._resolve_saved_rect(saved)
         show_cmd = saved.get("show_cmd", win32con.SW_SHOWNORMAL)
         is_electron_like = self._is_electron_like_window(saved, current)
         
@@ -257,7 +389,6 @@ class WindowRestorer:
 
     def _wait_for_window(self, saved, used_hwnds, timeout=5, overrides=None):
         start_time = time.time()
-        is_browser = any(b in saved.get('title_pattern', '').lower() for b in ["chrome", "firefox", "edge"])
         
         while time.time() - start_time < timeout:
             # Always detailed_scan to ensure we capture Explorer paths and Browser URLs for accurate matching
@@ -269,8 +400,38 @@ class WindowRestorer:
             time.sleep(0.2) # Optimized polling (was 1.0s)
         return None
 
+    def _finalize_pending_placements(self, pending_items, used_hwnds, overrides=None, timeout=8):
+        remaining = list(pending_items)
+        deadline = time.time() + timeout
+
+        while remaining and time.time() < deadline:
+            current_windows = self.scanner.get_target_windows(
+                detailed_scan=True,
+                allow_peeking=True,
+                overrides=overrides,
+            )
+            next_remaining = []
+            progress = False
+
+            for saved in remaining:
+                match = self.matcher.find_match(saved, current_windows, used_hwnds)
+                if match:
+                    used_hwnds.add(match["hwnd"])
+                    with Logger.step(f"Placement final: {self._get_saved_label(saved)[:30]}...", private=saved.get("is_incognito")):
+                        self._apply_window_placement(saved, match)
+                    progress = True
+                else:
+                    next_remaining.append(saved)
+
+            remaining = next_remaining
+            if remaining and not progress:
+                time.sleep(0.5)
+
+        return remaining
+
     def restore_layout(self, scenario_name):
         self.scanner.clear_cache()
+        self._restore_display_context = None
         Logger.title(f"Restauration : {scenario_name}")
         
         # Use accessor to handle V1/V2 structure automatically
@@ -281,6 +442,8 @@ class WindowRestorer:
             return False
 
         try:
+            self._prepare_display_context(layout_pkg)
+
             # Extract Data
             if isinstance(layout_pkg, list):
                 saved_windows = layout_pkg
@@ -301,12 +464,6 @@ class WindowRestorer:
             # If list is Top->Bottom, we should restore Bottom->Top (Reverse).
             # Let's keep existing logic as user said "working perfectly".
             
-            non_minimized_items = [w for w in saved_windows if w['show_cmd'] != win32con.SW_SHOWMINIMIZED]
-            minimized_items = [w for w in saved_windows if w['show_cmd'] == win32con.SW_SHOWMINIMIZED]
-            
-            # Restore Minimized Last? Or First?
-            # Existing logic separates them.
-            
             for w in saved_windows:
                 if not self.scanner.should_ignore_saved(w, overrides=local_settings):
                      pending_items.append(w)
@@ -324,7 +481,7 @@ class WindowRestorer:
                 match = self.matcher.find_match(saved, current_windows, used_hwnds)
                 if match:
                     used_hwnds.add(match["hwnd"])
-                    label = f"Placement immédiat: {saved['exact_title'][:40]}..."
+                    label = f"Placement immédiat: {self._get_saved_label(saved)[:40]}..."
                     with Logger.step(label, private=saved.get('is_incognito')):
                         self._apply_window_placement(saved, match)
                 else:
@@ -333,6 +490,7 @@ class WindowRestorer:
             if not still_missing:
                 Logger.success("Toutes les fenêtres sont déjà là !")
                 self._cleanup_peaked_windows(current_windows, used_hwnds)
+                self._log_display_context_summary()
                 return True
 
             # --- PHASE 2: SEQUENTIAL CONSTRUCTION (MISSING WINDOWS) ---
@@ -364,21 +522,27 @@ class WindowRestorer:
 
             # Execution Order
             sequence = apps + normal_browsers + private_chrome + private_firefox
+            delayed_items = []
             
             for i, saved in enumerate(sequence):
-                title = saved.get('exact_title', 'Inconnu')
+                title = self._get_saved_label(saved)
                 
                 # A. LAUNCH
                 cmdline = saved.get("cmdline")
-                exe = cmdline[0].lower() if cmdline else ""
-                is_browser = any(b in exe for b in ["chrome", "firefox", "msedge"])
+                exe_path = cmdline[0] if cmdline else ""
+                exe = exe_path.lower() if exe_path else ""
+                is_browser = self._is_browser_saved(saved)
                 is_priv = saved.get("is_incognito", False)
 
                 if is_browser:
                     # Launch single browser window
-                    self._launch_browser_group(exe, is_priv, [saved])
+                    launch_ok = self._launch_browser_group(exe_path, is_priv, [saved]) if exe_path else False
                 else:
-                    self._launch_app(saved)
+                    launch_ok = self._launch_app(saved)
+
+                if not launch_ok:
+                    Logger.warn(f"Lancement impossible, passage à la suite: {title}")
+                    continue
                 
                 # B. WAIT & PLACE (Immédiately)
                 # Give it a moment to appear
@@ -390,13 +554,25 @@ class WindowRestorer:
                     with Logger.step(f"Placement: {title[:30]}...", private=is_priv):
                         self._apply_window_placement(saved, match)
                 else:
-                    Logger.warn(f"Échec lancement/détection: {title}")
+                    Logger.warn(f"Détection différée, placement reporté: {title}")
+                    delayed_items.append(saved)
 
                 # Intelligent Delay between launches
                 if is_browser:
                     time.sleep(1.0 if "firefox" in exe else 0.5)
                 else:
                     time.sleep(0.2)
+
+            if delayed_items:
+                Logger.info(f"PHASE 3: Placement final ({len(delayed_items)} en attente)...")
+                unresolved_items = self._finalize_pending_placements(
+                    delayed_items,
+                    used_hwnds,
+                    overrides=local_settings,
+                    timeout=8,
+                )
+                for saved in unresolved_items:
+                    Logger.warn(f"Fenêtre toujours introuvable après reprise finale: {self._get_saved_label(saved)}")
 
             # --- FINAL CLEANUP ---
             # Re-minimize windows that were peaked but not used
@@ -409,11 +585,14 @@ class WindowRestorer:
             self._cleanup_peaked_windows(final_windows, used_hwnds)
 
             Logger.success("Restauration terminée")
+            self._log_display_context_summary()
             return True
 
         except Exception as e:
             Logger.error(f"Restore layout failed: {e}")
             return False
+        finally:
+            self._restore_display_context = None
 
     def _cleanup_peaked_windows(self, current_windows, used_hwnds):
         """ Re-minimizes windows that were peaked (restored) for inspection but NOT used in the layout. """

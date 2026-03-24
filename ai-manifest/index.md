@@ -9,11 +9,13 @@ Window Manager sauvegarde puis restaure des dispositions de fenêtres Windows (p
 - Énumération des fenêtres visibles via Win32.
 - Filtrage par titre/classe/settings.
 - Sauvegarde des métadonnées utiles: `rect`, `show_cmd`, `cmdline`, `cwd`, URL navigateur, dossier Explorer.
+- Sauvegarde du contexte d'affichage utile à la restauration: profil moniteurs + moniteur d'origine de chaque fenêtre.
 
 ### 2. Restauration de layout
 - Matching des fenêtres existantes puis placement immédiat.
 - Lancement séquentiel des fenêtres manquantes puis placement.
 - Support états normal / minimisé / maximisé.
+- Si la topologie écrans a changé depuis la sauvegarde, adaptation déterministe des positions quand les métadonnées écran sont disponibles.
 
 ### 3. Configuration utilisateur
 - Réglages globaux + overrides par slot/scénario.

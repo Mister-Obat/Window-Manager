@@ -211,6 +211,10 @@ class WindowLayoutManagerUI:
                                 font=("Consolas", 9), wrap=tk.WORD, state=tk.DISABLED,
                                 bd=0, highlightthickness=1, highlightbackground="#333333", height=10)
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._current_log_line = ""
+        self._current_log_line_start = None
+        self._last_completed_log_line = None
+        self._configure_log_tags()
         
         scrollbar = tk.Scrollbar(self.log_container, command=self.log_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -596,12 +600,67 @@ class WindowLayoutManagerUI:
         # Thread-safe log update using after()
         self.root.after(0, self._append_log_text, message)
 
+    def _configure_log_tags(self):
+        self.log_text.configure(fg="#d0d0d0")
+        self.log_text.tag_configure("log_default", foreground="#d0d0d0")
+        self.log_text.tag_configure("log_info", foreground="#8fd3ff")
+        self.log_text.tag_configure("log_success", foreground="#7fe39d")
+        self.log_text.tag_configure("log_warn", foreground="#ffd166")
+        self.log_text.tag_configure("log_error", foreground="#ff7b72")
+        self.log_text.tag_configure("log_title", foreground="#4cc2ff", font=("Consolas", 9, "bold"))
+        self.log_text.tag_configure("log_debug", foreground="#b39ddb")
+        self.log_text.tag_configure("log_private", foreground="#ffb86c")
+
+    def _resolve_log_tag(self, segment, current_line):
+        text = f"{current_line}{segment}".strip()
+        if not text:
+            return "log_default"
+
+        if "[ERREUR]" in text or "[ECHEC]" in text:
+            return "log_error"
+        if "[!]" in text:
+            return "log_warn"
+        if "[DEBUG]" in text:
+            return "log_debug"
+        if text.startswith("---"):
+            return "log_title"
+        if "[OK]" in text:
+            return "log_success"
+        if "[PRIVÉ]" in text:
+            return "log_private"
+        if text.startswith(">") or text.startswith(">>>") or text.startswith("  >"):
+            return "log_info"
+        return "log_default"
+
     def _append_log_text(self, message):
+        if not message:
+            return
+
+        normalized = message.replace("\r\n", "\n").replace("\r", "\n")
         self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, message)
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
-        self.log_text.update_idletasks() # Force UI refresh
+        try:
+            for segment in normalized.splitlines(keepends=True):
+                if self._current_log_line_start is None:
+                    self._current_log_line_start = self.log_text.index(tk.END)
+
+                tag = self._resolve_log_tag(segment, self._current_log_line)
+                self.log_text.insert(tk.END, segment, tag)
+                self._current_log_line += segment
+
+                if segment.endswith("\n"):
+                    completed_line = self._current_log_line
+                    if completed_line.strip() and completed_line == self._last_completed_log_line:
+                        self.log_text.delete(self._current_log_line_start, tk.END)
+                    elif completed_line.strip():
+                        self._last_completed_log_line = completed_line
+
+                    self._current_log_line = ""
+                    self._current_log_line_start = None
+
+            self.log_text.see(tk.END)
+        finally:
+            self.log_text.config(state=tk.DISABLED)
+            self.log_text.update_idletasks() # Force UI refresh
 
 # Update RedirectText to use the method
 class RedirectText:

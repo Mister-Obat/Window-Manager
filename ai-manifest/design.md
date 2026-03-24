@@ -3,6 +3,7 @@
 ## Principes UI
 - Interface simple orientée actions: sauvegarder, restaurer, options.
 - Feedback utilisateur immédiat via logs d'étapes (`Logger`).
+- Le terminal de logs doit distinguer visuellement les niveaux (`info`, `warn`, `error`, `success`, `debug`) et éviter les doublons visibles inutiles.
 - Thème sombre uniforme.
 
 ## Principes UX

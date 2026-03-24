@@ -20,3 +20,4 @@
 ## Cas de vigilance
 - Applications Electron/Chromium: éviter les forçages de repaint agressifs.
 - Fenêtres minimisées: matching plus permissif mais contrôlé.
+- Changement de topologie écrans: si le scénario possède des métadonnées d'affichage, adapter les positions; sinon avertir qu'une resauvegarde est recommandée.
